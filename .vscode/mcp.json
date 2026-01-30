@@ -1,0 +1,9 @@
+{
+	"servers": {
+		"dna-vcf-mcp-server": {
+			"url": "http://192.168.1.203:8090",
+			"type": "http"
+		}
+	},
+	"inputs": []
+}
