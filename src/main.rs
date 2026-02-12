@@ -1,6 +1,6 @@
 //! Example usage of the vcf-filter library.
 
-use vcf_filter::FilterEngine;
+use vcf_filter::{FilterEngine, docs};
 
 fn main() {
     // Example VCF header with INFO field definitions
@@ -40,5 +40,19 @@ fn main() {
             Err(e) => println!("  {} => ERROR: {}", filter, e),
         }
     }
-}
 
+    // Demonstrate the docs() function
+    println!("\n\nEmbedded Documentation Preview");
+    println!("===============================");
+    let documentation = docs();
+    let preview: String = documentation
+        .lines()
+        .take(10)
+        .collect::<Vec<_>>()
+        .join("\n");
+    println!("{}", preview);
+    println!(
+        "...\n(Total documentation length: {} bytes)",
+        documentation.len()
+    );
+}

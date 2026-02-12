@@ -60,6 +60,23 @@
 //! ### Functions
 //! - `exists(field)` - Check if a field exists
 
+/// Embedded README.md documentation
+const README: &str = include_str!("../README.md");
+
+/// Returns the embedded README.md documentation.
+///
+/// # Example
+///
+/// ```rust
+/// use vcf_filter::docs;
+///
+/// let documentation = docs();
+/// println!("{}", documentation);
+/// ```
+pub fn docs() -> &'static str {
+    README
+}
+
 pub mod error;
 pub mod eval;
 pub mod filter;
@@ -255,20 +272,44 @@ mod tests {
     #[test]
     fn test_real_row_ann_first() {
         let engine = FilterEngine::new(FULL_HEADER).unwrap();
-        assert!(engine.evaluate(r#"ANN[0].Annotation == "synonymous_variant""#, REAL_ROW).unwrap());
-        assert!(engine.evaluate(r#"ANN[0].Annotation_Impact == "LOW""#, REAL_ROW).unwrap());
-        assert!(engine.evaluate(r#"ANN[0].Gene_Name == "PRG4""#, REAL_ROW).unwrap());
+        assert!(
+            engine
+                .evaluate(r#"ANN[0].Annotation == "synonymous_variant""#, REAL_ROW)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .evaluate(r#"ANN[0].Annotation_Impact == "LOW""#, REAL_ROW)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .evaluate(r#"ANN[0].Gene_Name == "PRG4""#, REAL_ROW)
+                .unwrap()
+        );
     }
 
     #[test]
     fn test_real_row_ann_wildcard() {
         let engine = FilterEngine::new(FULL_HEADER).unwrap();
         // Any annotation has MODIFIER impact
-        assert!(engine.evaluate(r#"ANN[*].Annotation_Impact == "MODIFIER""#, REAL_ROW).unwrap());
+        assert!(
+            engine
+                .evaluate(r#"ANN[*].Annotation_Impact == "MODIFIER""#, REAL_ROW)
+                .unwrap()
+        );
         // Any annotation is for TPR gene
-        assert!(engine.evaluate(r#"ANN[*].Gene_Name == "TPR""#, REAL_ROW).unwrap());
+        assert!(
+            engine
+                .evaluate(r#"ANN[*].Gene_Name == "TPR""#, REAL_ROW)
+                .unwrap()
+        );
         // No annotation has HIGH impact
-        assert!(!engine.evaluate(r#"ANN[*].Annotation_Impact == "HIGH""#, REAL_ROW).unwrap());
+        assert!(
+            !engine
+                .evaluate(r#"ANN[*].Annotation_Impact == "HIGH""#, REAL_ROW)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -282,16 +323,24 @@ mod tests {
     fn test_real_row_complex_filter() {
         let engine = FilterEngine::new(FULL_HEADER).unwrap();
         // Combined filter: high quality, passed, and benign
-        assert!(engine.evaluate(
-            r#"QUAL > 30 && FILTER == "PASS" && CLNSIG == "Benign""#,
-            REAL_ROW
-        ).unwrap());
+        assert!(
+            engine
+                .evaluate(
+                    r#"QUAL > 30 && FILTER == "PASS" && CLNSIG == "Benign""#,
+                    REAL_ROW
+                )
+                .unwrap()
+        );
     }
 
     #[test]
     fn test_real_row_contains() {
         let engine = FilterEngine::new(FULL_HEADER).unwrap();
-        assert!(engine.evaluate(r#"CLNDN contains "Camptodactyly""#, REAL_ROW).unwrap());
+        assert!(
+            engine
+                .evaluate(r#"CLNDN contains "Camptodactyly""#, REAL_ROW)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -331,7 +380,7 @@ mod tests {
 ##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: 'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID'">
 "#;
         let engine = FilterEngine::new(header).unwrap();
-        
+
         // Check that ANN subfields were parsed
         let ann_field = engine.info_map().get("ANN").unwrap();
         let subfields = ann_field.subfields.as_ref().unwrap();
@@ -340,12 +389,16 @@ mod tests {
         assert_eq!(subfields[2], "Annotation_Impact");
         assert_eq!(subfields[3], "Gene_Name");
         assert_eq!(subfields[4], "Gene_ID");
-        
+
         let row = "chr1\t100\t.\tA\tG\t50\tPASS\tDP=30;ANN=G|missense|HIGH|BRCA1|ENSG123";
-        
+
         assert!(engine.evaluate("QUAL > 30", row).unwrap());
         assert!(engine.evaluate(r#"FILTER == "PASS""#, row).unwrap());
         assert!(engine.evaluate("DP >= 30", row).unwrap());
-        assert!(engine.evaluate(r#"ANN[0].Gene_Name == "BRCA1""#, row).unwrap());
+        assert!(
+            engine
+                .evaluate(r#"ANN[0].Gene_Name == "BRCA1""#, row)
+                .unwrap()
+        );
     }
 }
