@@ -9,6 +9,8 @@
 //! - Parse structured annotations (ANN, LOF, NMD) with automatic subfield detection
 //! - Filter expressions with comparison, logical, and containment operators
 //! - Array access with indexing (`[0]`) and wildcard (`[*]`) support
+//! - INFO-first field resolution when IDs overlap with FORMAT (e.g. `DP`)
+//! - Missing-safe numeric comparisons (`DP > 12` on missing DP evaluates to false)
 //!
 //! ## Example
 //!
@@ -54,8 +56,15 @@
 //! - `QUAL` - Built-in VCF column
 //! - `FILTER` - Filter status
 //! - `DP` - INFO field
+//! - `INFO.DP` - Explicit INFO field lookup
+//! - `FORMAT.DP` - Explicit FORMAT field lookup
 //! - `ANN[0].Gene_Name` - First annotation's gene name
+//! - `INFO.ANN[0].Gene_Name` - First annotation gene via explicit INFO namespace
 //! - `ANN[*].Annotation_Impact` - Any annotation's impact (wildcard)
+//!
+//! Non-built-in field resolution order is INFO first, then FORMAT.
+//! Use `INFO.<field>` or `FORMAT.<field>` for strict namespace resolution.
+//! If a numeric comparison involves a missing value, the comparison evaluates to `false`.
 //!
 //! ### Functions
 //! - `exists(field)` - Check if a field exists
@@ -233,6 +242,8 @@ impl FilterEngine {
 mod tests {
     use super::*;
 
+    const SAMPLE_VCF: &str = include_str!("../samples/sample.vcf");
+
     const FULL_HEADER: &str = r#"##INFO=<ID=END,Number=1,Type=Integer,Description="End position (for use with symbolic alleles)">
 ##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: 'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID | Feature_Type | Feature_ID | Transcript_BioType | Rank | HGVS.c | HGVS.p | cDNA.pos / cDNA.length | CDS.pos / CDS.length | AA.pos / AA.length | Distance | ERRORS / WARNINGS / INFO'">
 ##INFO=<ID=LOF,Number=.,Type=String,Description="Predicted loss of function effects for this variant. Format: 'Gene_Name | Gene_ID | Number_of_transcripts_in_gene | Percent_of_transcripts_affected'">
@@ -370,6 +381,53 @@ mod tests {
         let engine = FilterEngine::new(FULL_HEADER).unwrap();
         assert!(engine.evaluate("exists(CLNSIG)", REAL_ROW).unwrap());
         assert!(engine.evaluate("exists(ANN)", REAL_ROW).unwrap());
+    }
+
+    #[test]
+    fn test_sample_vcf_all_info_fields_filterable() {
+        let mut header_lines = Vec::new();
+        let mut rows = Vec::new();
+
+        for line in SAMPLE_VCF.lines() {
+            if line.starts_with("##") {
+                header_lines.push(line);
+            } else if !line.is_empty() && !line.starts_with('#') {
+                rows.push(line);
+            }
+        }
+
+        let header = header_lines.join("\n");
+        let engine = FilterEngine::new(&header).unwrap();
+
+        let checks = [
+            ("FREQ", r#"FREQ contains "1000Genomes""#),
+            ("COMMON", "exists(COMMON)"),
+            ("ANN", r#"ANN[*].Gene_Name == "DARC""#),
+            ("LOF", r#"LOF[0].Gene_Name contains "MLTK""#),
+            ("NMD", r#"NMD[0].Gene_Name contains "MLTK""#),
+            ("CLNSIG", r#"CLNSIG == "Pathogenic""#),
+            (
+                "CLNDN",
+                r#"CLNDN contains "Resistance_to_Plasmodium_vivax_infection""#,
+            ),
+            ("ALLELEID", "ALLELEID > 0"),
+        ];
+
+        for (field, filter) in checks {
+            assert!(
+                engine.info_map().contains_key(field),
+                "INFO field {field} was not parsed from sample header"
+            );
+
+            let matched = rows
+                .iter()
+                .any(|row| engine.evaluate(filter, row).unwrap_or(false));
+
+            assert!(
+                matched,
+                "No sample row matched filter '{filter}' for INFO field {field}"
+            );
+        }
     }
 
     #[test]

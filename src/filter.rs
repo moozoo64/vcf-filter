@@ -298,4 +298,25 @@ mod tests {
         let expr = parse_filter("42.5").unwrap();
         assert_eq!(expr, Expr::Number(42.5));
     }
+
+    #[test]
+    fn test_parse_namespaced_info_field() {
+        let expr = parse_filter("INFO.DP > 12").unwrap();
+        assert!(matches!(expr, Expr::Binary(_, BinaryOp::Gt, _)));
+    }
+
+    #[test]
+    fn test_parse_namespaced_format_field() {
+        let expr = parse_filter("FORMAT.DP >= 10").unwrap();
+        assert!(matches!(expr, Expr::Binary(_, BinaryOp::GtEq, _)));
+    }
+
+    #[test]
+    fn test_parse_namespaced_exists() {
+        let expr = parse_filter("exists(INFO.DP)").unwrap();
+        assert!(matches!(expr, Expr::Exists(_)));
+
+        let expr = parse_filter("exists(FORMAT.DP)").unwrap();
+        assert!(matches!(expr, Expr::Exists(_)));
+    }
 }

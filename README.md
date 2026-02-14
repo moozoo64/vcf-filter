@@ -7,7 +7,9 @@ A high-performance Rust library for filtering VCF (Variant Call Format) files us
 - **Expressive filter syntax** — Boolean logic, comparisons, string matching
 - **Structured annotation support** — Access SnpEff ANN, LOF, NMD subfields by name
 - **Wildcard matching** — `ANN[*].Gene_Name == "BRCA1"` matches any annotation
-- **Auto-detection** — Parses INFO field metadata from VCF headers
+- **Dynamic field metadata** — Parses available INFO fields from VCF headers at runtime
+- **INFO-first resolution** — When an ID exists in both INFO and FORMAT (e.g. `DP`), INFO is used first
+- **Missing-safe numeric filters** — Comparisons like `DP > 12` evaluate to `false` for missing values (no hard error)
 - **Zero-copy parsing** — Efficient processing of large VCF files
 
 ## Installation
@@ -16,7 +18,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-vcf-filter = "0.1.1"
+vcf-filter = "0.1.2"
 ```
 
 ## Quick Start
@@ -86,14 +88,43 @@ assert!(engine.evaluate(r#"ANN[0].Gene_Name == "BRCA1""#, row).unwrap());
 "DP >= 30"               // Read depth
 "AF > 0.01"              // Allele frequency
 
+// Explicit namespace-qualified field access
+"INFO.DP >= 30"          // Strict INFO/DP lookup
+"FORMAT.DP >= 10"        // Strict FORMAT/DP lookup (sample column)
+
 // Structured annotations (index access)
 "ANN[0].Gene_Name"           // First annotation's gene
 "ANN[0].Annotation_Impact"   // First annotation's impact
+"INFO.ANN[0].Gene_Name"      // Explicit INFO namespace
 
 // Wildcard access (any match)
 "ANN[*].Annotation_Impact == \"HIGH\""  // Any annotation has HIGH impact
 "ANN[*].Gene_Name == \"BRCA1\""         // Any annotation for BRCA1
 ```
+
+### Field Resolution Rules
+
+- Available INFO fields are discovered from `##INFO=<...>` lines in the input VCF header.
+- Built-in columns (`CHROM`, `POS`, `ID`, `REF`, `ALT`, `QUAL`, `FILTER`) are always available.
+- For non-built-in IDs, resolution order is:
+    1. `INFO` field value
+    2. `FORMAT` field value (first sample column)
+
+This means `DP` resolves to `INFO/DP` when both `INFO/DP` and `FORMAT/DP` exist.
+
+You can override this with explicit namespaces:
+- `INFO.DP` always reads from INFO
+- `FORMAT.DP` always reads from FORMAT
+
+### Missing Values in Numeric Comparisons
+
+Numeric comparisons with missing values do not fail filtering. They evaluate to `false`:
+
+```rust
+assert!(!engine.evaluate("DP > 12", "chr1\t100\t.\tA\tG\t50\tPASS\t.").unwrap());
+```
+
+This allows mixed-quality VCFs (some rows with missing `DP`) to be filtered without aborting the run.
 
 ### Functions
 
@@ -225,3 +256,11 @@ This library was vibe coded by Michael Simmons using GitHub Copilot with Claude 
 ## Contributing
 
 Contributions welcome! Please see the [Copilot Instructions](.github/copilot-instructions.md) for architecture details and development guidelines.
+
+## CLI Notes
+
+- Quote filters containing shell operators like `>` and `<`:
+
+```bash
+zcat input.vcf.gz | vcf-filter -filter "DP > 12"
+```

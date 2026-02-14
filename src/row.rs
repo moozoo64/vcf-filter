@@ -76,11 +76,13 @@ impl VcfRow {
                 }
             }
             _ => {
-                // Check FORMAT fields first, then INFO fields
-                if let Some(val) = self.format.get(field) {
+                // Check INFO fields first, then FORMAT fields.
+                // INFO is the primary namespace for filter fields and should
+                // not be shadowed by FORMAT fields with the same name (e.g., DP).
+                if let Some(val) = self.info.get(field) {
                     val.clone()
                 } else {
-                    self.info.get(field).cloned().unwrap_or(Value::Missing)
+                    self.format.get(field).cloned().unwrap_or(Value::Missing)
                 }
             }
         }
@@ -480,5 +482,24 @@ mod tests {
         assert_eq!(parsed.get("POS"), Value::Number(12345.0));
         assert_eq!(parsed.get("QUAL"), Value::Number(30.5));
         assert_eq!(parsed.get("FILTER"), Value::String("PASS".to_string()));
+    }
+
+    #[test]
+    fn test_info_field_takes_precedence_over_format_field() {
+        let header = r#"##INFO=<ID=DP,Number=1,Type=Integer,Description="Total depth">"#;
+        let info_map = parse_header(header).unwrap();
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\tDP=30\tGT:DP\t0/1:8";
+        let parsed = parse_row(row, &info_map).unwrap();
+
+        assert_eq!(parsed.get("DP"), Value::Number(30.0));
+    }
+
+    #[test]
+    fn test_format_field_used_when_info_missing() {
+        let info_map = parse_header(HEADER).unwrap();
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15";
+        let parsed = parse_row(row, &info_map).unwrap();
+
+        assert_eq!(parsed.get("DP"), Value::String("15".to_string()));
     }
 }

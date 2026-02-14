@@ -5,7 +5,7 @@
 use crate::error::{Result, VcfFilterError};
 use crate::filter::{AccessPart, BinaryOp, Expr, UnaryOp};
 use crate::header::InfoMap;
-use crate::row::{get_all_annotation_subfields, get_annotation_subfield, VcfRow};
+use crate::row::{VcfRow, get_all_annotation_subfields, get_annotation_subfield};
 use crate::value::Value;
 
 /// Evaluate a filter expression against a VCF row.
@@ -43,14 +43,67 @@ fn resolve_variable(parts: &[AccessPart], row: &VcfRow, info_map: &InfoMap) -> R
     // Get the base field name
     let field_name = match &parts[0] {
         AccessPart::Field(name) => name,
-        _ => return Err(VcfFilterError::EvaluationError(
-            "Variable must start with a field name".to_string(),
-        )),
+        _ => {
+            return Err(VcfFilterError::EvaluationError(
+                "Variable must start with a field name".to_string(),
+            ));
+        }
     };
 
-    // If only one part, return the field directly
-    if parts.len() == 1 {
-        return Ok(row.get(field_name));
+    // Namespace-qualified access: INFO.<field> or FORMAT.<field>
+    if field_name == "INFO" || field_name == "FORMAT" {
+        if parts.len() < 2 {
+            return Ok(Value::Missing);
+        }
+
+        let namespaced_field = match &parts[1] {
+            AccessPart::Field(name) => name,
+            _ => return Ok(Value::Missing),
+        };
+
+        return Ok(resolve_with_base(
+            Some(field_name),
+            namespaced_field,
+            &parts[2..],
+            row,
+            info_map,
+        ));
+    }
+
+    Ok(resolve_with_base(
+        None,
+        field_name,
+        &parts[1..],
+        row,
+        info_map,
+    ))
+}
+
+/// Resolve field access against a specific namespace.
+///
+/// `namespace` values:
+/// - `None`: unqualified lookup (`row.get` semantics)
+/// - `Some("INFO")`: strict INFO lookup
+/// - `Some("FORMAT")`: strict FORMAT lookup
+fn resolve_with_base(
+    namespace: Option<&str>,
+    field_name: &str,
+    access_parts: &[AccessPart],
+    row: &VcfRow,
+    info_map: &InfoMap,
+) -> Value {
+    let base_value = match namespace {
+        Some("INFO") => row.info.get(field_name).cloned().unwrap_or(Value::Missing),
+        Some("FORMAT") => row
+            .format
+            .get(field_name)
+            .cloned()
+            .unwrap_or(Value::Missing),
+        _ => row.get(field_name),
+    };
+
+    if access_parts.is_empty() {
+        return base_value;
     }
 
     // Handle structured field access (e.g., ANN[0].Gene_Name)
@@ -58,7 +111,7 @@ fn resolve_variable(parts: &[AccessPart], row: &VcfRow, info_map: &InfoMap) -> R
     let mut is_wildcard = false;
     let mut subfield_name: Option<String> = None;
 
-    for part in &parts[1..] {
+    for part in access_parts {
         match part {
             AccessPart::Index(i) => {
                 current_index = Some(*i);
@@ -74,25 +127,29 @@ fn resolve_variable(parts: &[AccessPart], row: &VcfRow, info_map: &InfoMap) -> R
 
     // If we have a subfield access
     if let Some(ref subfield) = subfield_name {
+        // FORMAT namespace does not support annotation-style subfield access.
+        if namespace == Some("FORMAT") {
+            return Value::Missing;
+        }
+
         if is_wildcard {
             // Return array of all matching subfield values
             let values = get_all_annotation_subfields(row, field_name, subfield, info_map);
-            return Ok(Value::Array(values));
+            return Value::Array(values);
         } else if let Some(idx) = current_index {
             // Return specific index's subfield
-            return Ok(get_annotation_subfield(row, field_name, idx, subfield, info_map));
+            return get_annotation_subfield(row, field_name, idx, subfield, info_map);
         }
     }
 
     // Array access without subfield
     if let Some(idx) = current_index {
-        let base = row.get(field_name);
-        if let Value::Array(arr) = base {
-            return Ok(arr.get(idx).cloned().unwrap_or(Value::Missing));
+        if let Value::Array(arr) = base_value {
+            return arr.get(idx).cloned().unwrap_or(Value::Missing);
         }
     }
 
-    Ok(Value::Missing)
+    Value::Missing
 }
 
 /// Evaluate a binary operation.
@@ -114,9 +171,8 @@ fn evaluate_binary(
             BinaryOp::Contains => arr.iter().any(|v| value_contains(v, &right_val)),
             _ => {
                 // For numeric comparisons, check if any match
-                arr.iter().any(|v| {
-                    compare_values(v, op, &right_val).unwrap_or(false)
-                })
+                arr.iter()
+                    .any(|v| compare_values(v, op, &right_val).unwrap_or(false))
             }
         };
         return Ok(Value::Bool(result));
@@ -150,12 +206,7 @@ fn evaluate_binary(
 }
 
 /// Evaluate a unary operation.
-fn evaluate_unary(
-    op: &UnaryOp,
-    inner: &Expr,
-    row: &VcfRow,
-    info_map: &InfoMap,
-) -> Result<Value> {
+fn evaluate_unary(op: &UnaryOp, inner: &Expr, row: &VcfRow, info_map: &InfoMap) -> Result<Value> {
     let val = evaluate(inner, row, info_map)?;
 
     match op {
@@ -174,9 +225,10 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         (Value::Bool(l), Value::Bool(r)) => l == r,
         (Value::Missing, Value::Missing) => true,
         // Try numeric comparison if one is a string that looks like a number
-        (Value::String(s), Value::Number(n)) | (Value::Number(n), Value::String(s)) => {
-            s.parse::<f64>().map(|sn| (sn - n).abs() < f64::EPSILON).unwrap_or(false)
-        }
+        (Value::String(s), Value::Number(n)) | (Value::Number(n), Value::String(s)) => s
+            .parse::<f64>()
+            .map(|sn| (sn - n).abs() < f64::EPSILON)
+            .unwrap_or(false),
         _ => false,
     }
 }
@@ -191,6 +243,10 @@ fn value_contains(left: &Value, right: &Value) -> bool {
 
 /// Compare two values with a comparison operator.
 fn compare_values(left: &Value, op: &BinaryOp, right: &Value) -> Result<bool> {
+    if matches!(left, Value::Missing) || matches!(right, Value::Missing) {
+        return Ok(false);
+    }
+
     let left_num = left.as_number();
     let right_num = right.as_number();
 
@@ -201,9 +257,12 @@ fn compare_values(left: &Value, op: &BinaryOp, right: &Value) -> Result<bool> {
                 BinaryOp::Gt => l > r,
                 BinaryOp::LtEq => l <= r,
                 BinaryOp::GtEq => l >= r,
-                _ => return Err(VcfFilterError::EvaluationError(
-                    format!("Unexpected operator in compare_values: {:?}", op),
-                )),
+                _ => {
+                    return Err(VcfFilterError::EvaluationError(format!(
+                        "Unexpected operator in compare_values: {:?}",
+                        op
+                    )));
+                }
             };
             Ok(result)
         }
@@ -216,9 +275,12 @@ fn compare_values(left: &Value, op: &BinaryOp, right: &Value) -> Result<bool> {
                         BinaryOp::Gt => l > r,
                         BinaryOp::LtEq => l <= r,
                         BinaryOp::GtEq => l >= r,
-                        _ => return Err(VcfFilterError::EvaluationError(
-                            format!("Unexpected operator in compare_values: {:?}", op),
-                        )),
+                        _ => {
+                            return Err(VcfFilterError::EvaluationError(format!(
+                                "Unexpected operator in compare_values: {:?}",
+                                op
+                            )));
+                        }
                     };
                     Ok(result)
                 }
@@ -286,10 +348,21 @@ mod tests {
     }
 
     #[test]
+    fn test_missing_numeric_field_comparison_is_false() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\t.";
+        assert!(!eval_filter("DP > 12", row, HEADER));
+        assert!(!eval_filter("DP <= 12", row, HEADER));
+    }
+
+    #[test]
     fn test_ann_subfield_access() {
         let row = "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense_variant|HIGH|BRCA1|ENSG123|transcript|ENST456|protein_coding|1/10|c.100A>G|p.Thr34Ala|100/500|100/400|34/133||";
         assert!(eval_filter(r#"ANN[0].Gene_Name == "BRCA1""#, row, HEADER));
-        assert!(eval_filter(r#"ANN[0].Annotation_Impact == "HIGH""#, row, HEADER));
+        assert!(eval_filter(
+            r#"ANN[0].Annotation_Impact == "HIGH""#,
+            row,
+            HEADER
+        ));
         assert!(!eval_filter(r#"ANN[0].Gene_Name == "BRCA2""#, row, HEADER));
     }
 
@@ -297,11 +370,19 @@ mod tests {
     fn test_ann_wildcard_access() {
         let row = "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense|LOW|BRCA1|E1|t|T1|pc|1|c.1|p.1|1|1|1||,G|synonymous|HIGH|BRCA2|E2|t|T2|pc|2|c.2|p.2|2|2|2||";
         // Any annotation has HIGH impact
-        assert!(eval_filter(r#"ANN[*].Annotation_Impact == "HIGH""#, row, HEADER));
+        assert!(eval_filter(
+            r#"ANN[*].Annotation_Impact == "HIGH""#,
+            row,
+            HEADER
+        ));
         // Any annotation is for BRCA1
         assert!(eval_filter(r#"ANN[*].Gene_Name == "BRCA1""#, row, HEADER));
         // No annotation has MODERATE impact
-        assert!(!eval_filter(r#"ANN[*].Annotation_Impact == "MODERATE""#, row, HEADER));
+        assert!(!eval_filter(
+            r#"ANN[*].Annotation_Impact == "MODERATE""#,
+            row,
+            HEADER
+        ));
     }
 
     #[test]
@@ -331,6 +412,56 @@ mod tests {
         assert!(eval_filter("exists(DP)", row, HEADER));
         assert!(eval_filter("exists(CLNSIG)", row, HEADER));
         assert!(!eval_filter("exists(AF)", row, HEADER));
+    }
+
+    #[test]
+    fn test_dp_numeric_comparison_from_format_when_info_missing() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15";
+        assert!(eval_filter("DP > 12", row, HEADER));
+        assert!(!eval_filter("DP > 20", row, HEADER));
+    }
+
+    #[test]
+    fn test_namespaced_info_and_format_resolution() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\tDP=30\tGT:DP\t0/1:15";
+
+        // Unqualified DP keeps default (INFO-first) behavior
+        assert!(eval_filter("DP == 30", row, HEADER));
+
+        // Namespaced fields resolve strictly
+        assert!(eval_filter("INFO.DP == 30", row, HEADER));
+        assert!(eval_filter("FORMAT.DP == 15", row, HEADER));
+        assert!(!eval_filter("FORMAT.DP == 30", row, HEADER));
+    }
+
+    #[test]
+    fn test_namespaced_exists_behavior() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15";
+
+        assert!(!eval_filter("exists(INFO.DP)", row, HEADER));
+        assert!(eval_filter("exists(FORMAT.DP)", row, HEADER));
+    }
+
+    #[test]
+    fn test_namespaced_info_annotation_access() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense_variant|HIGH|BRCA1|ENSG123|transcript|ENST456|protein_coding|1/10|c.100A>G|p.Thr34Ala|100/500|100/400|34/133||,G|synonymous_variant|LOW|BRCA2|ENSG456|transcript|ENST789|protein_coding|2/10|c.101A>G|p.Thr35Ala|101/500|101/400|35/133||";
+
+        assert!(eval_filter(
+            r#"INFO.ANN[0].Gene_Name == "BRCA1""#,
+            row,
+            HEADER
+        ));
+        assert!(eval_filter(
+            r#"INFO.ANN[*].Annotation_Impact == "HIGH""#,
+            row,
+            HEADER
+        ));
+    }
+
+    #[test]
+    fn test_format_subfield_chain_is_missing() {
+        let row = "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15";
+        assert!(!eval_filter("FORMAT.DP.X == 15", row, HEADER));
     }
 
     #[test]
