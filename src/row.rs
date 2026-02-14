@@ -28,6 +28,8 @@ pub struct VcfRow {
     pub filter: Vec<String>,
     /// INFO fields parsed into values.
     pub info: HashMap<String, Value>,
+    /// FORMAT fields (sample genotype data like GT, DP, GQ).
+    pub format: HashMap<String, Value>,
 }
 
 /// A single annotation from a structured field like ANN.
@@ -73,7 +75,14 @@ impl VcfRow {
                     )
                 }
             }
-            _ => self.info.get(field).cloned().unwrap_or(Value::Missing),
+            _ => {
+                // Check FORMAT fields first, then INFO fields
+                if let Some(val) = self.format.get(field) {
+                    val.clone()
+                } else {
+                    self.info.get(field).cloned().unwrap_or(Value::Missing)
+                }
+            }
         }
     }
 }
@@ -271,6 +280,13 @@ pub fn parse_row(row: &str, info_map: &InfoMap) -> Result<VcfRow> {
 
     let info = parse_info_column(fields[7], info_map);
 
+    // Parse FORMAT and sample columns if present (columns 9 and 10+)
+    let format = if fields.len() >= 10 {
+        parse_format_columns(fields[8], fields[9])
+    } else {
+        HashMap::new()
+    };
+
     Ok(VcfRow {
         chrom,
         pos,
@@ -280,7 +296,32 @@ pub fn parse_row(row: &str, info_map: &InfoMap) -> Result<VcfRow> {
         qual,
         filter,
         info,
+        format,
     })
+}
+
+/// Parse FORMAT and sample columns into a HashMap.
+///
+/// FORMAT column contains colon-separated field names (e.g., "GT:DP:GQ"),
+/// and sample column contains corresponding colon-separated values (e.g., "0/1:30:99").
+fn parse_format_columns(format_str: &str, sample_str: &str) -> HashMap<String, Value> {
+    let mut result = HashMap::new();
+
+    let format_keys: Vec<&str> = format_str.split(':').collect();
+    let sample_values: Vec<&str> = sample_str.split(':').collect();
+
+    for (i, key) in format_keys.iter().enumerate() {
+        if let Some(value) = sample_values.get(i) {
+            let val = if *value == "." {
+                Value::Missing
+            } else {
+                Value::String(value.to_string())
+            };
+            result.insert(key.to_string(), val);
+        }
+    }
+
+    result
 }
 
 /// Helper to access a subfield from a structured annotation.

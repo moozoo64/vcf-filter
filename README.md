@@ -16,7 +16,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-vcf-filter = "0.1.0"
+vcf-filter = "0.1.1"
 ```
 
 ## Quick Start
@@ -71,8 +71,16 @@ assert!(engine.evaluate(r#"ANN[0].Gene_Name == "BRCA1""#, row).unwrap());
 // Built-in VCF columns
 "CHROM == \"chr1\""      // Chromosome
 "POS > 100000"           // Position
+"ID == \"rs123\""        // Variant ID
+"REF == \"A\""           // Reference allele
+"ALT == \"G\""           // Alternate allele
 "QUAL >= 30"             // Quality score
 "FILTER == \"PASS\""     // Filter status
+
+// FORMAT/sample fields (genotype data)
+"GT == \"0/0\""          // Homozygous reference
+"GT == \"0/1\""          // Heterozygous
+"GT == \"1/1\""          // Homozygous alternate
 
 // INFO fields
 "DP >= 30"               // Read depth
