@@ -8,12 +8,15 @@
 use std::io::{self, BufRead, Write};
 use vcf_filter::FilterEngine;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Parse arguments
     let filter_expr = match parse_args(&args) {
-        Ok(expr) => expr,
+        Ok(Some(expr)) => expr,
+        Ok(None) => return, // Version was printed, exit successfully
         Err(msg) => {
             eprintln!("{}", msg);
             std::process::exit(1);
@@ -26,24 +29,35 @@ fn main() {
     }
 }
 
-fn parse_args(args: &[String]) -> Result<String, String> {
-    if args.len() < 3 {
+fn parse_args(args: &[String]) -> Result<Option<String>, String> {
+    if args.len() < 2 {
         return Err(format!(
             "Usage: {} -filter <expression>\n\n\
+             Options:\n  \
+             -filter, --filter <expr>  Filter expression\n  \
+             -V, --version             Print version\n\n\
              Example:\n  \
              zcat test.vcf.gz | {} -filter \"QUAL > 30 && exists(CLNSIG)\" | bgzip -c > out.vcf.gz",
             args[0], args[0]
         ));
     }
 
-    if args[1] != "-filter" && args[1] != "--filter" {
-        return Err(format!(
-            "Unknown option: {}. Use -filter <expression>",
+    match args[1].as_str() {
+        "-V" | "--version" => {
+            println!("vcf-filter {}", VERSION);
+            Ok(None)
+        }
+        "-filter" | "--filter" => {
+            if args.len() < 3 {
+                return Err("Missing filter expression after -filter".to_string());
+            }
+            Ok(Some(args[2].clone()))
+        }
+        _ => Err(format!(
+            "Unknown option: {}. Use -filter <expression> or --version",
             args[1]
-        ));
+        )),
     }
-
-    Ok(args[2].clone())
 }
 
 fn run_filter(filter_expr: &str) -> Result<(), Box<dyn std::error::Error>> {
