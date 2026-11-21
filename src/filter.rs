@@ -72,21 +72,20 @@ impl Expr {
 }
 
 /// Create the filter expression parser.
-pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
+pub fn parser<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, char>>> {
     recursive(|full_expr| {
         // Number literal
         let number = text::int(10)
-            .chain::<char, _, _>(just('.').chain(text::digits(10)).or_not().flatten())
-            .collect::<String>()
-            .map(|s| Expr::Number(s.parse().unwrap()))
+            .then(just('.').then(text::digits(10)).or_not())
+            .to_slice()
+            .map(|s: &str| Expr::Number(s.parse().unwrap()))
             .padded();
 
         // String literal (double-quoted)
         let string = just('"')
-            .ignore_then(filter(|c| *c != '"').repeated())
+            .ignore_then(none_of('"').repeated().to_slice())
             .then_ignore(just('"'))
-            .collect::<String>()
-            .map(Expr::String)
+            .map(|s: &str| Expr::String(s.to_string()))
             .padded();
 
         // Boolean literal
@@ -104,19 +103,23 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             .ignore_then(
                 just('*')
                     .to(AccessPart::Wildcard)
-                    .or(text::int(10).map(|s: String| AccessPart::Index(s.parse().unwrap()))),
+                    .or(text::int(10).map(|s: &str| AccessPart::Index(s.parse().unwrap()))),
             )
             .then_ignore(just(']'));
 
         // Field access: .FieldName
         let field_access = just('.')
             .ignore_then(text::ident().padded())
-            .map(|s: String| AccessPart::Field(s));
+            .map(|s: &str| AccessPart::Field(s.to_string()));
 
         // Variable with optional access chain: ANN[0].Gene_Name
         let variable = ident
-            .map(|s: String| AccessPart::Field(s))
-            .then(choice((array_index.clone(), field_access.clone())).repeated())
+            .map(|s: &str| AccessPart::Field(s.to_string()))
+            .then(
+                choice((array_index.clone(), field_access))
+                    .repeated()
+                    .collect::<Vec<_>>(),
+            )
             .map(|(first, rest)| {
                 let mut parts = vec![first];
                 parts.extend(rest);
@@ -133,8 +136,12 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     .ignore_then(
                         text::ident()
                             .padded()
-                            .map(|s: String| AccessPart::Field(s))
-                            .then(choice((array_index, field_access)).repeated())
+                            .map(|s: &str| AccessPart::Field(s.to_string()))
+                            .then(
+                                choice((array_index, field_access))
+                                    .repeated()
+                                    .collect::<Vec<_>>(),
+                            )
                             .map(|(first, rest)| {
                                 let mut parts = vec![first];
                                 parts.extend(rest);
@@ -158,8 +165,7 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         let unary = just('!')
             .padded()
             .repeated()
-            .then(atom)
-            .foldr(|_op, expr| Expr::Unary(UnaryOp::Not, Box::new(expr)));
+            .foldr(atom, |_op, expr| Expr::Unary(UnaryOp::Not, Box::new(expr)));
 
         // Comparison operators
         let cmp_op = choice((
@@ -174,31 +180,31 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         .padded();
 
         // Comparison expressions
-        let comparison = unary
-            .clone()
-            .then(cmp_op.then(unary).repeated())
-            .foldl(|left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)));
+        let comparison = unary.clone().foldl(
+            cmp_op.then(unary).repeated(),
+            |left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)),
+        );
 
         // Logical AND (&&)
         let and_op = just("&&").padded().to(BinaryOp::And);
-        let and_expr = comparison
-            .clone()
-            .then(and_op.then(comparison).repeated())
-            .foldl(|left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)));
+        let and_expr = comparison.clone().foldl(
+            and_op.then(comparison).repeated(),
+            |left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)),
+        );
 
         // Logical OR (||)
         let or_op = just("||").padded().to(BinaryOp::Or);
-        and_expr
-            .clone()
-            .then(or_op.then(and_expr).repeated())
-            .foldl(|left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)))
+        and_expr.clone().foldl(
+            or_op.then(and_expr).repeated(),
+            |left, (op, right)| Expr::Binary(Box::new(left), op, Box::new(right)),
+        )
     })
     .then_ignore(end())
 }
 
 /// Parse a filter expression string into an AST.
-pub fn parse_filter(filter: &str) -> Result<Expr, Vec<Simple<char>>> {
-    parser().parse(filter)
+pub fn parse_filter(filter: &str) -> Result<Expr, Vec<Rich<'_, char>>> {
+    parser().parse(filter).into_result()
 }
 
 #[cfg(test)]

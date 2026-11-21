@@ -86,6 +86,11 @@ pub fn docs() -> &'static str {
     README
 }
 
+/// Compiles and runs the README's Rust code blocks as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 pub mod error;
 pub mod eval;
 pub mod filter;

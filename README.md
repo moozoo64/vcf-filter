@@ -18,7 +18,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-vcf-filter = "0.1.2"
+vcf-filter = "0.1.3"
 ```
 
 ## Quick Start
@@ -69,7 +69,7 @@ assert!(engine.evaluate(r#"ANN[0].Gene_Name == "BRCA1""#, row).unwrap());
 
 ### Field Access
 
-```rust
+```text
 // Built-in VCF columns
 "CHROM == \"chr1\""      // Chromosome
 "POS > 100000"           // Position
@@ -120,7 +120,7 @@ You can override this with explicit namespaces:
 
 Numeric comparisons with missing values do not fail filtering. They evaluate to `false`:
 
-```rust
+```rust,ignore
 assert!(!engine.evaluate("DP > 12", "chr1\t100\t.\tA\tG\t50\tPASS\t.").unwrap());
 ```
 
@@ -136,7 +136,7 @@ This allows mixed-quality VCFs (some rows with missing `DP`) to be filtered with
 
 ### Filter by Quality and Depth
 
-```rust
+```rust,ignore
 let filter = "QUAL >= 30 && DP >= 10";
 if engine.evaluate(filter, row)? {
     println!("Variant passes quality filters");
@@ -173,7 +173,7 @@ let filter = r#"CLNDN contains "cancer" || CLNDN contains "carcinoma""#;
 
 ### Efficient Batch Processing
 
-```rust
+```rust,ignore
 // Pre-parse filter and rows for better performance
 let expr = engine.parse_filter("QUAL > 30 && DP >= 10")?;
 
@@ -190,7 +190,7 @@ for line in vcf_rows {
 The library automatically detects structured annotations from VCF header descriptions:
 
 ### SnpEff ANN Format
-```
+```text
 ##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: 'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID | Feature_Type | Feature_ID | Transcript_BioType | Rank | HGVS.c | HGVS.p | cDNA.pos / cDNA.length | CDS.pos / CDS.length | AA.pos / AA.length | Distance | ERRORS / WARNINGS / INFO'">
 ```
 
@@ -201,7 +201,7 @@ Access subfields by name (normalized: spaces→`_`, dots→`_`, slashes→`_`):
 - `ANN[0].HGVS_c`
 
 ### SnpEff LOF/NMD Format
-```
+```text
 ##INFO=<ID=LOF,Number=.,Type=String,Description="Predicted loss of function effects. Format: 'Gene_Name | Gene_ID | Number_of_transcripts_in_gene | Percent_of_transcripts_affected'">
 ```
 
@@ -209,7 +209,7 @@ Access subfields by name (normalized: spaces→`_`, dots→`_`, slashes→`_`):
 
 ### FilterEngine
 
-```rust
+```rust,ignore
 impl FilterEngine {
     /// Create a new engine from VCF header
     pub fn new(header: &str) -> Result<Self>;
@@ -233,7 +233,7 @@ impl FilterEngine {
 
 ### Error Handling
 
-```rust
+```rust,ignore
 use vcf_filter::{FilterEngine, VcfFilterError};
 
 match engine.evaluate(filter, row) {

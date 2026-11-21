@@ -1,11 +1,11 @@
 [package]
 name = "vcf-filter"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 
 [dependencies]
-chumsky = "0.9"
-thiserror = "2"
+chumsky = "0.14.2"
+thiserror = "2.0.21"
 
 [dev-dependencies]
 pretty_assertions = "1"
